@@ -97,8 +97,10 @@ add_custom_command(TARGET ${PROJECT_NAME}
 					COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> ${CMAKE_SOURCE_DIR})
 
 
-
-
+#Ibex
+find_package(PkgConfig REQUIRED)
+pkg_search_module(IBEX REQUIRED IMPORTED_TARGET ibex)
+target_link_libraries(${PROJECT_NAME} PkgConfig::IBEX)
 #message(${fusebmc_SRC})
 #add_subdirectory(src)
 #llvm_map_components_to_libnames(llvm_libs support core irreader)
