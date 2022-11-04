@@ -434,22 +434,6 @@ void MyVisitor::check(Stmt *S) {
     } else if (isa<IfStmt>(S)) {
         IfStmt *ifStmt = cast<IfStmt>(S);
         SourceLocation startLoc = findRParenLocInIfOrWhile(ifStmt);
-        auto cond = ifStmt->getCond()->ignoreParenBaseCasts();
-        cond->dumpColor();
-        //its not getType()
-        cout << cond->getStmtClassName() << endl;
-        if(cond->getStmtClass() == clang::Stmt::BinaryOperatorClass)
-            cout << "YEESS" <<endl;
-        if (BinaryOperator *b = dyn_cast<BinaryOperator>(cond)) {
-            cout << "-----------" << endl;
-            b->getLHS()->dumpColor();
-            cout << b->getOpcodeStr().str() << endl;
-            cout << "-----------" << endl;
-        }
-
-        //cond->getBestDynamicClassTypeExpr()->dump();
-        //if( cond->getType() == clang::BinaryOperator)
-        //  cout << "yes" << endl;
         if (startLoc.isInvalid())
             return;
         Stmt *Else = ifStmt->getElse();
