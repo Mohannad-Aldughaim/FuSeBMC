@@ -15,49 +15,39 @@
 #include <llvm/ADT/IntrusiveRefCntPtr.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Support/FileSystem.h>
-
-//#include <clang/Basic/DiagnosticOptions.h>
-//#include <clang/Frontend/TextDiagnosticPrinter.h>
+#include <boost/tokenizer.hpp>
+#include <string.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Basic/TargetOptions.h>
 #include <clang/Basic/TargetInfo.h>
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/Lex/Preprocessor.h>
-#include <clang/Lex/Lexer.h>
+
 #include <clang/Basic/Diagnostic.h>
-#include <clang/AST/RecursiveASTVisitor.h>
-#include <clang/AST/ASTConsumer.h>
+
 #include <clang/Parse/ParseAST.h>
 #include <clang/Rewrite/Frontend/Rewriters.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <clang/Lex/PreprocessorOptions.h>
-#include <clang/Frontend/CompilerInstance.h>
+
 #include <clang/Basic/Builtins.h>
 #include <llvm/Support/Path.h>
 #include <clang/Tooling/Tooling.h>
 
 #include <MyASTConsumer.h>
 #include <NonDetConsumer.h>
-#include <FuSeBMC_instrument.h>
-#include <MyVisitor.h>
-#include <NonDetVisitor.h>
+
 #include <MyHolder.h>
 #include <GoalCounter.h>
 #include <FuncDeclInfo.h>
 #include <FuncCallInfo.h>
 #include <MyOptions.h>
 #include <iostream>
-#include <fstream>
-#include <regex>
-//#include <bits/resource.h>
 
-#include <config.h>
-#include <FuncCallInfo.h>
 #include <SelectiveInputsHandler.h>
 #include <StdCFuncHandler.h>
-
-
+#include "Interval_approach.h"
 
 
 #define FuSeBMC_inustrment_VERSION "Version 1.0.0"
@@ -164,7 +154,139 @@ bool createDirs(std::string & path,bool isDir = true)
 		pos += replace.length();
 	}
 }*/
+bool startsWith(const std::string &str, const std::string &prefix) {
+    return str.size() >= prefix.size() && str.compare(0, prefix.size(), prefix) == 0;
+}
+bool run_frama_c(string filename, map<int, struct goto_contractort *> *cmap)
+{
+    FILE *fp;
+    string command = "./Frama-c/bin/frama-c -eva " + filename;
+    fp = popen(command.c_str(), "r");
+    if (fp == NULL) {
+        printf("Failed to run command\n");
+        return false;
+    }
 
+    char path[1035];
+
+    std::string s;
+    /* Read the output a line at a time - output it. */
+    while (fgets(path, sizeof(path), fp) != NULL) {
+        s += path;
+    }
+
+    std::string delimiter = "[eva]";
+
+    size_t pos = 0;
+    std::string token;
+    while ((pos = s.find(delimiter)) != std::string::npos) {
+        token = s.substr(0, pos);
+        auto goal_pos = token.find("GOAL");
+        if (goal_pos != std::string::npos) {
+            ///which goal
+            auto g = token.substr(goal_pos + 5, token.size());
+            auto del = g.find("_");
+            int goal_num = std::stoi(g.substr(0, del));
+            g = g.substr(del + 1, token.size());
+
+            ///variables
+
+            del = g.find("_");
+            int var_num = std::stoi(g.substr(0, del));
+            g = g.substr(del + 2, token.size());
+            g.erase(std::remove_if(g.begin(), g.end(), ::isspace), g.end());
+
+            std::cout << "goal num: " << goal_num << "  var_num: " << var_num << std::endl;
+
+
+            ///intervals
+            int closing;
+            double lb, ub;
+            boost::char_separator<char> sep(",");
+            boost::tokenizer< boost::char_separator<char> > tokens(g, sep);
+            int i=0;
+            auto inter = (*cmap)[goal_num]->map.var_map.begin();
+
+            if(var_num > 0) {
+                for (const auto &tok: tokens) {
+                    if (startsWith(tok, "{")) {
+                        closing = tok.find("}");
+                        string t = tok.substr(1, closing - 1);
+
+                        del = t.find(";");
+                        if (del != std::string::npos) {
+                            lb = stod(t.substr(0, del));
+                            while (del != std::string::npos) {
+                                t = t.substr(del + 1, t.size());
+                                del = t.find(";");
+                            }
+                            ub = stod(t);
+                        } else {
+                            lb = ub = stod(t);
+                        }
+                        std::cout << lb << " " << ub << std::endl;
+                        ibex::Interval *x = new ibex::Interval(lb, ub);
+                        inter->second->setInterval(*x);
+
+                    } else if (startsWith(tok, "[")) {
+                        closing = tok.find("]");
+                        auto t = tok.substr(1, closing - 1);
+                        del = t.find("..");
+                        if (del != std::string::npos) {
+                            lb = stod(t.substr(0, del));
+                            ub = stod(t.substr(del + 2, t.size()));
+                            std::cout << lb << " " << ub << std::endl;
+                            ibex::Interval *x = new ibex::Interval(lb, ub);
+                            inter->second->setInterval(*x);
+                        }
+                    }
+                    inter++;
+                }
+            }
+        }
+        s.erase(0, pos + delimiter.length());
+    }
+    /* close */
+    pclose(fp);
+    return true;
+}
+
+void output_to_file(Rewriter &Rewrite, FileID &fileID, llvm::raw_fd_ostream &outFile)
+{
+
+    const RewriteBuffer *RewriteBuf = Rewrite.getRewriteBufferFor(fileID);
+    if(RewriteBuf)
+    {
+        std::cout << "Output to: " << myOptions->outputFile << std::endl;
+        std::string theOut = std::string(RewriteBuf->begin(), RewriteBuf->end());
+
+        outFile << theOut;
+        if(mustPrintGeneratedCode)
+            llvm::outs() << theOut;
+        isOutFileWritten = true;
+        outFile.flush();
+    }
+    else
+    {
+        llvm::errs() << "No changes can be made.\n";
+        llvm::errs() << "The input file will be copied to the output file.\n";
+        // copy the input file to the output
+        std::ifstream inputFilefs;
+        inputFilefs.open(myOptions->inputFile);
+        if (inputFilefs)
+        {
+            std::string line;
+            while (std::getline(inputFilefs,line))
+            {
+                //ReplaceStringInPlace(line,"__VERIFIER_nondet_", "\n\n__VERIFIER_nondet_");
+                outFile << line << "\n";
+            }
+            inputFilefs.close();
+            isOutFileWritten = true;
+
+        }
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -461,19 +583,7 @@ int main(int argc, char **argv)
 	SmallVector<char,1024> path_vect;
 	llvm::sys::fs::real_path(argv[0],path_vect,true);
 	std::string current_folder = llvm::sys::path::parent_path(path_vect.data()).str();
-	//std::cout << path_vect.data() << std::endl;
-	//std::cout << llvm::sys::path::parent_path(path_vect.data()).str() << std::endl;
 
-	/*argc=6;
-	char *argvv[]={"./my_instrument", "./examples/a.cpp", "./examples/uftp_out.c" , "./examples/uftp_goals.txt",
-	"./examples/goals_out", "-I/home/kaled/sdb1/uFTP/library", "-DOPENSSL_ENABLE"};
-	argv=argvv;
-	*/
-	/*std::string inputFile(argv[1]);
-	std::string outputFile(argv[2]);
-	std::string goalOutputFile(argv[3]);
-	std::string goalProFuncDir(argv[4]);
-	if(goalProFuncDir != "-nogoalProFunc") */
 	if(myOptions->exportCallGraph)
 	{
 		funcDeclList = new FuncDeclList();
@@ -565,29 +675,16 @@ int main(int argc, char **argv)
 	Invocation->setLangDefaults(langOpts, clang::InputKind::CXX,compiler.getTarget().getTriple(),compiler.getPreprocessorOpts(), clang::LangStandard::lang_c11);
 #endif
 
-	//clang::InputKind ik(Language::CXX, InputKind::Format::Source, false);
-	//Invocation->setLangDefaults(langOpts, ik ,compiler.getTarget().getTriple(),compiler.getPreprocessorOpts(), clang::LangStandard::lang_c11);
-
-	//Invocation->getLangOpts()->GNUMode = 1; 
-	//Invocation->getLangOpts()->CXXExceptions = 1; 
-	//Invocation->getLangOpts()->RTTI = 1; 
-	//Invocation->getLangOpts()->Bool = 1; 
-	//Invocation->getLangOpts()->CPlusPlus = 1;
-
-	//Invocation->getLangOpts()->WChar = true;
-	//Invocation->getLangOpts()->Blocks = true;
-	//Invocation->getLangOpts()->DebuggerSupport = true;
-	//Invocation->getLangOpts()->SpellChecking = false;
-	//Invocation->getLangOpts()->ThreadsafeStatics = false;
-	//Invocation->getLangOpts()->AccessControl = false;
-	//Invocation->getLangOpts()->DollarIdents = true;
-	//Invocation->getLangOpts()->Exceptions = true;
 	Invocation->getLangOpts()->BracketDepth = 200000;
 	preprocessor.SetSuppressIncludeNotFoundError(false);
 	preprocessor.getBuiltinInfo().initializeBuiltins(preprocessor.getIdentifierTable(),preprocessor.getLangOpts());
 	// Initialize rewriter
 	Rewriter Rewrite;
 	Rewrite.setSourceMgr(compiler.getSourceManager(),compiler.getLangOpts());
+
+    Rewriter interval_rewriter;
+    interval_rewriter.setSourceMgr(compiler.getSourceManager(),compiler.getLangOpts());
+
 	//const FileEntry *pFile = compiler.getFileManager().getFile(myOptions->inputFile);
 	llvm::ErrorOr<const FileEntry *> pFile = compiler.getFileManager().getFile(myOptions->inputFile);
 	if(pFile.getError())
@@ -607,24 +704,15 @@ int main(int argc, char **argv)
 		std::cout << "Error in hadModuleLoaderFatalFailure." << std::endl;
 		//exit(-1);
 	}
-	MyASTConsumer astConsumer(Rewrite,myHolder);
-	//NonDetConsumer nonDetConsumer(Rewrite,myHolder);
 
-	// Convert <file>.c to <file_out>.c
-	/*std::string outName (fileName);
-	size_t ext = outName.rfind(".");
-	if (ext == std::string::npos)
-		ext = outName.length();
-	outName.insert(ext, "_out");
-	*/
-/*if(compiler.getDiagnostics().hasFatalErrorOccurred())
-{
-	llvm::errs() << "HASSSS FATAL ERORRRR\n";
-	//exit(-1);
-}*/
+    map<int, goto_contractort *> *contractors =  new map<int,goto_contractort*>();
+
+	MyASTConsumer astConsumer(Rewrite, myHolder, interval_rewriter, contractors);
+
 	std::error_code OutErrorInfo;
 	std::error_code ok;
 	llvm::raw_fd_ostream outFile(llvm::StringRef(myOptions->outputFile), OutErrorInfo, llvm::sys::fs::F_None);
+    llvm::raw_fd_ostream outFile_i(llvm::StringRef(myOptions->outputFile + ".interval.c"), OutErrorInfo, llvm::sys::fs::F_None);
 	if (OutErrorInfo == ok)
 	{
 		// Parse the AST
@@ -643,10 +731,7 @@ int main(int argc, char **argv)
 		{
 			outFile << "void FuSeBMC_custom_func(void){}\n";
 		}
-		/*if(myOptions->handleReturnInMain)
-		{
-			outFile << "void fuSeBMC_return(int code);\n";
-		}*/
+
 		if(myOptions->addFuncCallInFunc)
 		{
 			vector<string> * vect_unique_calls =  myOptions->GetUniqueCalls();
@@ -659,37 +744,62 @@ int main(int argc, char **argv)
 
 			delete vect_unique_calls;
 		}
-		const RewriteBuffer *RewriteBuf = Rewrite.getRewriteBufferFor(fileID);
-		if(RewriteBuf)
-		{
-			std::cout << "Output to: " << myOptions->outputFile << std::endl;
-			std::string theOut = std::string(RewriteBuf->begin(), RewriteBuf->end());
-			//ReplaceStringInPlace(theOut,"__VERIFIER_nondet_", "\n\n__VERIFIER_nondet_");
-			//llvm::outs() << theOut;
-			outFile << theOut;
-			if(mustPrintGeneratedCode)
-				llvm::outs() << theOut;
-			isOutFileWritten = true;
-		}
-		else
-		{
-			llvm::errs() << "No changes can be made.\n";
-			llvm::errs() << "The input file will be copied to the output file.\n";
-			// copy the input file to the output
-			std::ifstream inputFilefs;
-			inputFilefs.open(myOptions->inputFile);
-			if (inputFilefs)
-			{
-				std::string line;
-				while (std::getline(inputFilefs,line))
-				{
-					//ReplaceStringInPlace(line,"__VERIFIER_nondet_", "\n\n__VERIFIER_nondet_");
-					outFile << line << "\n";
-				}
-				inputFilefs.close();
-				isOutFileWritten = true;
-			}
-		}
+
+
+        output_to_file(Rewrite, fileID, outFile);
+        output_to_file(interval_rewriter,fileID,outFile_i);
+
+        run_frama_c(myOptions->outputFile + ".interval.c", contractors);
+
+        ostringstream IAInfo;
+        double gmin=POS_INFINITY,gmax=NEG_INFINITY;
+        for(int c=1;c<=goalCounter.counter;c++) {
+            auto i = (*contractors)[c];
+            if(i == nullptr )
+                IAInfo <<  "Goal " << c << ":\n" << "NULL" << endl;
+            else {
+                IAInfo << "Goal " << c << ":" << endl;
+                try {
+                    i->apply_contractor();
+                    string list = i->get_intervals_list();
+                    IAInfo << list ;
+                    cout << gmin << " : "  << gmax <<endl;
+                    i->min_max_bounds(&gmin,&gmax);
+                }
+                catch(exception e)
+                {
+                    cout << e.what() << endl;
+                }
+            }
+        }
+        //IAInfo << std::ends;
+
+        ofstream outdata;
+        outdata.open("IA.info"); // opens the file
+        if( !outdata ) { // file couldn't be opened
+            cerr << "Error: file IA.info could not be opened" << endl;
+            //exit(1);
+        }
+        else
+        {
+            outdata << IAInfo.str();
+            outdata.close();
+        }
+
+        ofstream outdata_sf;
+        outdata_sf.open("sf_IA.info"); // opens the file
+        if( !outdata_sf ) { // file couldn't be opened
+            cerr << "Error: file sf_IA.info could not be opened" << endl;
+            //exit(1);
+        }
+        else
+        {
+            outdata_sf << gmin << "\n"<<gmax<<endl;
+            outdata_sf.close();
+        }
+
+
+
 	}
 	else
 	{
@@ -787,26 +897,6 @@ int main(int argc, char **argv)
 			selectiveInputsHandler->searchForSelectiveInputs();
 			std::cout << "SelectiveInputsHandler is Done.... "  << std::endl;
 		}
-	
-		/*clang::FileID fileID = compiler.getSourceManager().getMainFileID();
-		if(fileID.isInvalid())
-		{
-			llvm::errs() << "File ID is not valid.\n";
-			exit(-1);
-		}
-
-
-		const RewriteBuffer * RewriteBuf = nonDetRewrite.getRewriteBufferFor(fileID);
-		llvm::raw_fd_ostream nonDet_outFile(llvm::StringRef(myOptions->outputFile), OutErrorInfo, llvm::sys::fs::F_None);
-		if(RewriteBuf)
-		{
-			//std::cout << "Output to: " << myOptions->outputFile << std::endl;
-			std::string theOut = std::string(RewriteBuf->begin(), RewriteBuf->end());
-			//ReplaceStringInPlace(theOut,"__VERIFIER_nondet_", "\n\n__VERIFIER_nondet_");
-			//llvm::outs() << theOut;
-
-			nonDet_outFile << theOut;
-		}*/
 	}
 /* NEW CODE END **/
 

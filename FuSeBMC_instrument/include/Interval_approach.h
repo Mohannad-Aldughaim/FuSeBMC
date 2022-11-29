@@ -49,7 +49,7 @@ public:
     Contractor(ibex::Ctc *c, unsigned int loc) {
         outer = c;
         location = loc;
-        inner = get_complement_contractor(c);
+        //inner = get_complement_contractor(c);
     }
 
     Contractor() = default;
@@ -79,7 +79,7 @@ public:
     }
 
 private:
-    ibex::Ctc *get_complement_contractor(ibex::Ctc *c) {
+    /*ibex::Ctc *get_complement_contractor(ibex::Ctc *c) {
         if (auto ctc_compo = dynamic_cast<ibex::CtcCompo *>(c)) {
             ibex::Array<ibex::Ctc> list_of_contractors;
             for (auto &it: ctc_compo->list)
@@ -115,7 +115,7 @@ private:
         }
         //debug log error
         return nullptr;
-    }
+    } */
 };
 
 class Contractors {
@@ -145,29 +145,32 @@ public:
 
         auto size = contractors.size();
         ibex::Array<ibex::Ctc> outer[size];
-        ibex::Array<ibex::Ctc> inner[size];
+        //ibex::Array<ibex::Ctc> inner[size];
         for (auto const &ctc: contractors) {
             outer->add(*(ctc->get_outer()));
-            inner->add(*(ctc->get_inner()));
+            //inner->add(*(ctc->get_inner()));
         }
-        c->set_outer(new ibex::CtcCompo(*outer));
-        c->set_inner(new ibex::CtcUnion(*inner));
+        if(outer->size() == 0)
+            c->set_outer(nullptr);
+        else
+            c->set_outer(new ibex::CtcCompo(*outer));
+        // c->set_inner(new ibex::CtcUnion(*inner));
         c->set_location(0);
         return c;
     }
 
-    void dump() {
+    /*void dump() {
         std::ostringstream oss;
 
         for (auto const &c: contractors) {
             oss << "outer :" << to_oss(c->get_outer()).str() << "\n";
-            oss << "inner :" << to_oss(c->get_inner()).str() << "\n";
-            oss << "location :" << c->get_location() << "\n";
+           // oss << "inner :" << to_oss(c->get_inner()).str() << "\n";
+           // oss << "location :" << c->get_location() << "\n";
         }
         std::cout << oss.str() << std::endl;
     }
 
-    std::ostringstream list_to_oss(ibex::Array<ibex::Ctc> *list, bool is_compo) {
+    /*std::ostringstream list_to_oss(ibex::Array<ibex::Ctc> *list, bool is_compo) {
         std::ostringstream oss;
         auto it = list->begin();
         oss << "( " << to_oss(&*it).str();
@@ -180,17 +183,25 @@ public:
         return oss;
     }
 
-    std::ostringstream to_oss(ibex::Ctc *c) {
+   /*std::ostringstream to_oss(ibex::Ctc *c) {
         std::ostringstream oss;
-        if (auto ctc_compo = dynamic_cast<ibex::CtcCompo *>(c))
+        try{
+            //clang::isa<ibex::CtcCompo>(c);
+            auto ctc_compo = static_cast<ibex::CtcUnion *>(c);
             oss = list_to_oss(&ctc_compo->list, true);
-        else if (auto ctc_union = dynamic_cast<ibex::CtcUnion *>(c))
+        }
+        catch(exception e)
+        {
+            oss << "NO" <<std::endl;
+        }
+
+        /*else if (auto ctc_union = dynamic_cast<ibex::CtcUnion *>(c))
             oss = list_to_oss(&ctc_union->list, false);
         else if (auto fwdbwd = dynamic_cast<ibex::CtcFwdBwd *>(c))
             oss << fwdbwd->ctr;
 
         return oss;
-    }
+    }*/
 
     void add_contractor(ibex::Ctc *ctc, unsigned int loc) {
         if (ctc != nullptr) {
@@ -212,10 +223,10 @@ public:
  */
 class CspMap {
 public:
-    static constexpr int MAX_VAR = 26;
+    static constexpr int MAX_VAR = 100;
     static constexpr int NOT_FOUND = -1;
 
-    std::map<std::string, vart> var_map;
+    std::map<std::string, vart *> var_map;
 
     CspMap() {
     }
@@ -223,36 +234,38 @@ public:
     size_t add_var(const std::string &name, clang::VarDecl *symbol) {
         auto find = var_map.find(name);
         if (find == var_map.end()) {
-            vart var(name, symbol, n);
-            var_map.insert(std::make_pair(name, var));
             //TODO: set initial intervals based on type and width.
+            interval x(NEG_INFINITY, POS_INFINITY);
+            vart *var = new vart(name, symbol, n);
+            var->setInterval(x);
+            var_map[name] = var;
             n++;
             return n - 1;
         }
-        return find->second.getIndex();
+        return find->second->getIndex();
     }
 
     void update_lb_interval(double lb, const std::string &name) {
         auto find = var_map.find(name);
         if (find == var_map.end())
             return;
-        ibex::Interval X(lb, find->second.getInterval().ub());
-        find->second.setInterval(X);
+        ibex::Interval X(lb, find->second->getInterval().ub());
+        find->second->setInterval(X);
     }
 
     void update_ub_interval(double ub, const std::string &name) {
         auto find = var_map.find(name);
         if (find == var_map.end())
             return;
-        ibex::Interval X(find->second.getInterval().lb(), ub);
-        find->second.setInterval(X);
+        ibex::Interval X(find->second->getInterval().lb(), ub);
+        find->second->setInterval(X);
     }
 
     int find(const std::string &name) {
         auto find = var_map.find(name);
         if (find == var_map.end())
             return NOT_FOUND;
-        return find->second.getIndex();
+        return find->second->getIndex();
     }
 
     size_t size() const {
@@ -262,7 +275,7 @@ public:
     ibex::IntervalVector create_interval_vector() {
         ibex::IntervalVector X(var_map.size());
         for (auto const &var: var_map)
-            X[var.second.getIndex()] = var.second.getInterval();
+            X[var.second->getIndex()] = var.second->getInterval();
         return X;
     }
 
@@ -276,9 +289,9 @@ public:
             return;
 
         for (auto &var: var_map) {
-            if (var.second.getInterval() != vector[var.second.getIndex()]) {
-                var.second.setInterval(vector[var.second.getIndex()]);
-                var.second.setIntervalChanged(true);
+            if (var.second->getInterval() != vector[var.second->getIndex()]) {
+                var.second->setInterval(vector[var.second->getIndex()]);
+                var.second->setIntervalChanged(true);
             }
         }
     }
@@ -305,16 +318,18 @@ public:
      * @param _goto_functions
      */
     goto_contractort() {
+        vars = new ibex::Variable(CspMap::MAX_VAR);
+        /*
         initialize_main_function_loops();
         if (true) {
-            vars = new ibex::Variable(CspMap::MAX_VAR);
+
             std::cout << "1/4 - Parsing asserts to create CSP Constraints." << std::endl;
             //get_contractors();
             if (contractors.is_empty()) {
                 std::cout << "Contractors: expression not supported, No Contractors were created." << std::endl;
                 return;
             }
-            contractors.dump();
+            //contractors.dump();
             std::cout << "2/4 - Parsing assumes to set values for variables intervals."<< std::endl;
             get_intervals();
 
@@ -323,10 +338,20 @@ public:
 
             std::cout << "4/4 - Inserting assumes."<< std::endl;
             insert_assume();
-        }
+        }*/
     }
 
-private:
+/// \Function get_contractors is a function that will go through each asert
+/// in the program and parse it from ESBMC expression to an IBEX expression
+/// that will be added create two contractors with the constraints.
+/// One is for the outer contractor with the constraint of the assert
+/// condition, another for the inner with the complement of the constraint.
+/// the function will return nothing. However the contractors be added to
+/// the list of contractors.
+/// \param functionst list of functions in the goto program
+    void get_contractors(clang::Expr *expr);
+
+public:
     ibex::IntervalVector domains;
     ///vars variable references to be used in Ibex formulas
     ibex::Variable *vars;
@@ -339,16 +364,6 @@ private:
 
     //typedef std::list<loopst> function_loopst;
     //function_loopst function_loops;
-
-    /// \Function get_contractors is a function that will go through each asert
-    /// in the program and parse it from ESBMC expression to an IBEX expression
-    /// that will be added create two contractors with the constraints.
-    /// One is for the outer contractor with the constraint of the assert
-    /// condition, another for the inner with the complement of the constraint.
-    /// the function will return nothing. However the contractors be added to
-    /// the list of contractors.
-    /// \param functionst list of functions in the goto program
-    void get_contractors(clang::Expr *expr);
 
     /// \Function get_intervals is a function that will go through each asert in
     /// the program and parse it from ESBMC expression to a triplet that are the
@@ -421,6 +436,47 @@ private:
     bool initialize_main_function_loops();
 
     clang::Expr *get_base_object(clang::Expr *expr);
+
+    string get_list_of_vars() {
+        string list;
+        if (this->map.var_map.empty())
+            return "  ";
+        for (auto &i: this->map.var_map) {
+            list += ",";
+            list += i.first;
+        }
+        return list.erase(0, 1);
+    }
+
+    string get_intervals_list() {
+        string list = "";
+        //std::cout << "Result" << std::endl;
+        if (map.is_empty_set())
+            list += "Unreachable\n";
+        else
+            for (auto &i: this->map.var_map)
+                list += i.first + "\n" + std::to_string(i.second->getInterval().lb()) + "\n" +
+                        std::to_string(i.second->getInterval().ub()) + "\n";
+        //list+= "end of Result" << std::endl;
+        return list;
+    }
+
+    void min_max_bounds(double *min, double *max) {
+        //*min = POS_INFINITY;
+        //*max = NEG_INFINITY;
+
+        if (map.is_empty_set())
+            return;
+        else
+            for (auto &i: this->map.var_map) {
+                if (i.second->getInterval().lb() != NEG_INFINITY && i.second->getInterval().lb() < *min)
+                    *min = i.second->getInterval().lb();
+                if (i.second->getInterval().ub() != POS_INFINITY && i.second->getInterval().ub() > *max)
+                    *max = i.second->getInterval().ub();
+            }
+
+
+    }
 };
 
 #endif //FUSEBMC_INSTRUMENT_INTERVAL_APPROACH_H_I

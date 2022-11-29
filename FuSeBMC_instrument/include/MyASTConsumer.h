@@ -13,7 +13,7 @@ using namespace clang;
 class MyASTConsumer:public ASTConsumer
 {
 	public:
-		MyASTConsumer(Rewriter &Rewrite,MyHolder& H);
+		MyASTConsumer(Rewriter &Rewrite, MyHolder &H, Rewriter &rewriter, std::map<int, goto_contractort*> *map);
 		virtual bool HandleTopLevelDecl(DeclGroupRef d);
 		virtual ~MyASTConsumer();
 		MyVisitor rv;

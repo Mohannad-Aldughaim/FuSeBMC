@@ -24,9 +24,11 @@ void goto_contractort::apply_contractor() {
     Contractor *contractor = contractors.get_contractors();
 
     //Take the intersection of all contractors to perform Algorithm 2
+    if(contractor->get_outer() == nullptr)
+        return;
     ibex::CtcFixPoint c_out(*contractor->get_outer());
     //Take the union of all contractors with complement constraints to perform Algorithm 3
-    ibex::CtcFixPoint c_in(*contractor->get_inner());
+    //ibex::CtcFixPoint c_in(*contractor->get_inner());
 
     std::ostringstream oss;
 
@@ -36,12 +38,13 @@ void goto_contractort::apply_contractor() {
     oss << "\n\t- Domains (before): " << domains;
     auto X = domains;
 
-    c_in.contract(X);
+    //std::cout << X << std::endl;
+    c_out.contract(X);
 
     oss << "\n\t- Domains (after): " << X;
     map.update_intervals(X);
 
-    std::cout << oss.str() << std::endl;
+    //std::cout << oss.str() << std::endl;
 }
 
 ibex::Ctc *goto_contractort::create_contractor_from_expr2t(clang::Expr *expr) {
@@ -53,48 +56,49 @@ ibex::Ctc *goto_contractort::create_contractor_from_expr2t(clang::Expr *expr) {
         if (cons == nullptr)
             return nullptr;
         contractor = new ibex::CtcFwdBwd(*cons);
+        //std::cout<<static_cast<ibex::CtcFwdBwd*>(contractor)->ctr.f <<std::endl;
     } else {
-        //std::shared_ptr<logic_2ops> logic_op;
-        //logic_op = std::dynamic_pointer_cast<logic_2ops>(base_object);
 
-        clang::BinaryOperator *binary_operator_expr = clang::cast<clang::BinaryOperator>(base_object);
+        if(clang::isa<clang::BinaryOperator>(base_object)) {
+            clang::BinaryOperator *binary_operator_expr = clang::cast<clang::BinaryOperator>(base_object);
 
-        switch (binary_operator_expr->getOpcode()) {
-            case clang::BinaryOperatorKind::BO_LAnd: {
-                auto side1 = create_contractor_from_expr2t(binary_operator_expr->getLHS());
-                auto side2 = create_contractor_from_expr2t(binary_operator_expr->getRHS());
-                if (side1 != nullptr && side2 != nullptr)
-                    contractor = new ibex::CtcCompo(*side1, *side2);
-                break;
-            }
-            case clang::BinaryOperatorKind::BO_LOr: {
-                auto side1 = create_contractor_from_expr2t(binary_operator_expr->getLHS());
-                auto side2 = create_contractor_from_expr2t(binary_operator_expr->getRHS());
-                if (side1 != nullptr && side2 != nullptr)
-                    contractor = new ibex::CtcUnion(*side1, *side2);
-                break;
-            }
-            case clang::BinaryOperatorKind::BO_EQ : {
-                //std::shared_ptr<relation_data> rel;
-                //rel = std::dynamic_pointer_cast<relation_data>(base_object);
-                ibex::Function *f = create_function_from_expr2t(binary_operator_expr->getLHS());
-                ibex::Function *g = create_function_from_expr2t(binary_operator_expr->getRHS());
-                if (g == nullptr || f == nullptr)
-                    return nullptr;
-                auto *side1 = new ibex::NumConstraint(*vars, (*f)(*vars) > (*g)(*vars));
-                auto *side2 = new ibex::NumConstraint(*vars, (*f)(*vars) < (*g)(*vars));
-                auto *c_side1 = new ibex::CtcFwdBwd(*side1);
-                auto *c_side2 = new ibex::CtcFwdBwd(*side2);
-                contractor = new ibex::CtcUnion(*c_side1, *c_side2);
-                break;
-            }
-                /*case expr2t::expr_ids::not_id:
-                    //TODO: implement "not" flag  and process.
+            switch (binary_operator_expr->getOpcode()) {
+                case clang::BinaryOperatorKind::BO_LAnd: {
+                    auto side1 = create_contractor_from_expr2t(binary_operator_expr->getLHS());
+                    auto side2 = create_contractor_from_expr2t(binary_operator_expr->getRHS());
+                    if (side1 != nullptr && side2 != nullptr)
+                        contractor = new ibex::CtcCompo(*side1, *side2);
+                    break;
+                }
+                case clang::BinaryOperatorKind::BO_LOr: {
+                    auto side1 = create_contractor_from_expr2t(binary_operator_expr->getLHS());
+                    auto side2 = create_contractor_from_expr2t(binary_operator_expr->getRHS());
+                    if (side1 != nullptr && side2 != nullptr)
+                        contractor = new ibex::CtcUnion(*side1, *side2);
+                    break;
+                }
+                case clang::BinaryOperatorKind::BO_EQ : {
+                    //std::shared_ptr<relation_data> rel;
+                    //rel = std::dynamic_pointer_cast<relation_data>(base_object);
+                    ibex::Function *f = create_function_from_expr2t(binary_operator_expr->getLHS());
+                    ibex::Function *g = create_function_from_expr2t(binary_operator_expr->getRHS());
+                    if (g == nullptr || f == nullptr)
+                        return nullptr;
+                    auto *side1 = new ibex::NumConstraint(*vars, (*f)(*vars) > (*g)(*vars));
+                    auto *side2 = new ibex::NumConstraint(*vars, (*f)(*vars) < (*g)(*vars));
+                    auto *c_side1 = new ibex::CtcFwdBwd(*side1);
+                    auto *c_side2 = new ibex::CtcFwdBwd(*side2);
+                    contractor = new ibex::CtcUnion(*c_side1, *c_side2);
+                    break;
+                }
+                    /*case expr2t::expr_ids::not_id:
+                        //TODO: implement "not" flag  and process.
+                        parse_error(base_object);
+                        break;*/
+                default:
                     parse_error(base_object);
-                    break;*/
-            default:
-                parse_error(base_object);
-                break;
+                    break;
+            }
         }
     }
     return contractor;
@@ -103,10 +107,12 @@ ibex::Ctc *goto_contractort::create_contractor_from_expr2t(clang::Expr *expr) {
 bool goto_contractort::is_constraint_operator(clang::Expr *expr) {
     clang::Expr *e = get_base_object(expr);
     clang::BinaryOperator *b;
-    if (clang::isa<clang::BinaryOperator>(e))
+    if (clang::isa<clang::BinaryOperator>(e)) {
         b = clang::cast<clang::BinaryOperator>(e);
-    return (b->isComparisonOp() && !(b->getOpcode() == clang::BinaryOperatorKind::BO_NE)) || b->isAdditiveOp() ||
-           b->isMultiplicativeOp();
+        return (b->isComparisonOp() && !(b->getOpcode() == clang::BinaryOperatorKind::BO_NE)) || b->isAdditiveOp() ||
+               b->isMultiplicativeOp();
+    }
+    return false;
 }
 
 ibex::NumConstraint *
@@ -174,11 +180,6 @@ ibex::Function *goto_contractort::create_function_from_expr2t(clang::Expr *expr)
     ibex::Function *g, *h;
 
     auto base_object = get_base_object(expr);
-    if(!clang::isa<clang::BinaryOperator>(base_object))
-    {
-        parse_error(expr);
-        return nullptr;
-    }
 
     switch (base_object->getStmtClass()) {
         case clang::Stmt::BinaryOperatorClass: {
@@ -230,11 +231,9 @@ ibex::Function *goto_contractort::create_function_from_expr2t(clang::Expr *expr)
                     f = new ibex::Function(*vars, (*vars)[index]);
                 } else {
                     std::cout << "ERROR: MAX VAR SIZE REACHED" << std::endl;
-                    return nullptr;
                 }
             }
-            std::cout << "not an integer variable"<< std::endl;
-            return nullptr;
+
             break;
         }
         case clang::Stmt::IntegerLiteralClass: {
@@ -270,10 +269,11 @@ bool goto_contractort::initialize_main_function_loops() {
 
 clang::Expr *goto_contractort::get_base_object(clang::Expr *expr) {
     ;
-    if (clang::isa<clang::CastExpr>(expr)) {
+    while (clang::isa<clang::CastExpr>(expr)) {
         clang::CastExpr *e = clang::cast<clang::CastExpr>(expr);
-        return e->getSubExpr();
+        expr =  e->getSubExpr();
     }
+    //else if(clang::isa<clang::ValueStmt>(expr))
     return expr;
 }
 
@@ -307,3 +307,5 @@ void vart::setIntervalChanged(bool intervalChanged) {
 clang::VarDecl *vart::getSymbol() const {
     return symbol;
 }
+
+

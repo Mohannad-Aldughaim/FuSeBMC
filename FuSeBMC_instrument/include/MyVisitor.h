@@ -36,6 +36,7 @@
 #include <FuSeBMC_instrument.h>
 #include <MyHolder.h>
 #include <GoalCounter.h>
+#include "Interval_approach.h"
 
 //#include <clang/ASTMatchers/ASTMatchFinder.h>
 //#include <clang/ASTMatchers/ASTMatchers.h>
@@ -66,7 +67,7 @@ class MyVisitor : public RecursiveASTVisitor<MyVisitor>
 		SourceManager * sourceManager;
 		ASTContext * aSTContext = TheHolder.ASTContext;
 	
-	MyVisitor(Rewriter &R, MyHolder& H);
+	MyVisitor(Rewriter &R, MyHolder &H, Rewriter &interval_rewriter,map<int, goto_contractort*> *contractors_map);
 
 	bool TraverseDecl(Decl* decl);
 	tok::TokenKind getTokenKindInLocation(SourceLocation location);
@@ -84,5 +85,9 @@ class MyVisitor : public RecursiveASTVisitor<MyVisitor>
 	const clang::FileEntry* GetLocFileEntry(SourceLocation loc);
 	bool containNonDetCall(Stmt * S);
 	void handleInfiniteWhileLoop(WhileStmt * whileStmt,SourceLocation rParenLoc);
+
+    Rewriter &interval_rewriter;
+    std::map<int, goto_contractort*> *contractor_map;
+    goto_contractort *c;
 };
 #endif

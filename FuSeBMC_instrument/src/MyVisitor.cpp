@@ -24,7 +24,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <clang/Lex/Token.h>
 #include <clang/AST/ParentMap.h>
-
+#include <map>
 #include <cstdio>
 #include <memory>
 #include <sstream>
@@ -38,8 +38,7 @@
 #include <FuSeBMC_instrument.h>
 
 #include "FuncDeclInfo.h"
-//#include <clang/ASTMatchers/ASTMatchFinder.h>
-//#include <clang/ASTMatchers/ASTMatchers.h>
+
 
 using namespace clang;
 extern MyOptions *myOptions;
@@ -48,50 +47,15 @@ extern unsigned mainFileID;
 GoalCounter &goalCounter = GoalCounter::getInstance();
 int infinteWhileNum = 0;
 
-MyVisitor::MyVisitor(Rewriter &R, MyHolder &H) : TheRewriter(R), TheHolder(H) {
+MyVisitor::MyVisitor(Rewriter &R, MyHolder &H, Rewriter &rewriter, std::map<int, goto_contractort *> *contractors_map)
+        : TheRewriter(R), TheHolder(H), interval_rewriter(rewriter), contractor_map(contractors_map) {
     this->sourceManager = TheHolder.SourceManager;
     this->aSTContext = TheHolder.ASTContext;
+    c = new goto_contractort();
 }
 
 bool MyVisitor::TraverseDecl(Decl *decl) {
-    //llvm::outs() << "TTTTTTTT";
-    ///decl->dumpColor();
-    //if(decl->isFunctionOrFunctionTemplate())
-    {
-        //FunctionDecl *func = decl->getAsFunction();
-        //const SourceManager &SM = *TheHolder.SourceManager;
-        //const ASTContext *Context = TheHolder.ASTContext;
-        //if(func->hasBody())
-        //{
-        //Stmt * body =func->getBody();
-        //for (Stmt::child_iterator i = body->child_begin(), e = body->child_end(); i != e; ++i)
-        //{
-        //Stmt *currStmt = *i;
-        //if(isa<ReturnStmt>(currStmt))
-        //{
-        //ReturnStmt * retStmt =cast<ReturnStmt>(currStmt);
-        //std::cout << "BEGIN STMMT" << std::endl;
-        //retStmt->dumpColor();
-        //std::cout << "END STMMT" << std::endl;
-        //TheRewriter.InsertTextBefore(retStmt->getLocStart().getLocWithOffset(0) ,"/*my return goal*/"+GoalCounter::getInstance().GetNewGoalForFunc(current_func->getNameAsString())+"");
-        //}
-        //}
-        //TheRewriter.InsertTextAfter(body->getLocStart().getLocWithOffset(1),"\r\n" + GoalCounter::getInstance().GetNewGoalForFunc(func->getNameAsString()));
-        //}
 
-        /*if(myOptions->replace_reach_error)
-        {
-            IdentifierInfo * identifierInfo = func->getIdentifier();. . µ m ..mn,m
-            if (identifierInfo->getName()=="reach_error")
-            {
-                this->has_reach_error = true;
-                //this->has_reach_error_body = func->hasBody();
-                //if(func->hasBody())
-                //	TheRewriter.ReplaceText(func->getNameInfo().getBeginLoc(), identifierInfo->getName().size(), " __VERIFIER_NEW_error ");
-            }
-        }*/
-    }
-    //return true;
     return Base::TraverseDecl(decl);
 }
 
@@ -145,6 +109,24 @@ bool MyVisitor::checkStmt(Stmt *S, SourceLocation initialLoc, SourceLocation end
                                                                goalCounter.GetNewGoalForFuncDecl(current_func,
                                                                                                  tmpGoalType) +
                                                                GET_LINE_E()));
+            if (tmpGoalType == GoalType::IF) {
+                if (!isIfIfOrElseIf) {
+                    if(c->map.size() !=0) {
+                        (*contractor_map)[goalCounter.counter] = c;
+                        interval_rewriter.InsertTextAfter(compoundStmt->getLBracLoc().getLocWithOffset(1),
+                                                          (GET_LINE() +
+                                                           "Frama_C_show_each_GOAL_" +
+                                                           to_string(goalCounter.counter) + "_" +
+                                                           to_string(
+                                                                   (*contractor_map)[goalCounter.counter]->map.size()) +
+                                                           "_(" +
+                                                           (*contractor_map)[goalCounter.counter]->get_list_of_vars() +
+                                                           ");" +
+                                                           GET_LINE_E()));
+                    }
+                    c = new goto_contractort();
+                }
+            }
         }
         if (instrumentOption == InstrumentOption::MUST_INSERT_ELSE && myOptions->addElse)
             TheRewriter.InsertTextBefore(compoundStmt->getRBracLoc().getLocWithOffset(1),
@@ -206,6 +188,7 @@ bool MyVisitor::checkStmt(Stmt *S, SourceLocation initialLoc, SourceLocation end
     assert(startLoc.isValid());
     assert(endLoc.isValid());
 #endif
+    bool isif = false;
     if (myOptions->addLabels) {
         GoalType tmpGoalType = GoalType::COMPOUND;
 
@@ -228,6 +211,27 @@ bool MyVisitor::checkStmt(Stmt *S, SourceLocation initialLoc, SourceLocation end
                                               ((isIfIfOrElseIf ? "" : goalCounter.GetNewGoalForFuncDecl(current_func,
                                                                                                         tmpGoalType))) +
                                               GET_LINE_E());
+
+        if (tmpGoalType == GoalType::IF) {
+            if (!isIfIfOrElseIf) {
+                if(c->map.size() !=0) {
+                    (*contractor_map)[goalCounter.counter] = c;
+                    interval_rewriter.InsertTextAfter(startLoc, GET_LINE() + "\n{\n" +
+                                                                (GET_LINE() +
+                                                                 "Frama_C_show_each_GOAL_" +
+                                                                 to_string(goalCounter.counter) +
+                                                                 "_" +
+                                                                 to_string(
+                                                                         (*contractor_map)[goalCounter.counter]->map.size()) +
+                                                                 "_(" +
+                                                                 (*contractor_map)[goalCounter.counter]->get_list_of_vars() +
+                                                                 ");" +
+                                                                 GET_LINE_E()));
+                }
+                c = new goto_contractort();
+                isif = true;
+            }
+        }
     }
     if (instrumentOption == InstrumentOption::MUST_INSERT_ELSE && myOptions->addElse) {
         TheRewriter.InsertTextBefore(endLoc, GET_LINE() + closing + "else \n{" +
@@ -249,6 +253,8 @@ bool MyVisitor::checkStmt(Stmt *S, SourceLocation initialLoc, SourceLocation end
             if (is_for_CxxFor_while && myOptions->addLabelAfterLoop)
                 closing += D("/*C*/") + goalCounter.GetNewGoalForFuncDecl(current_func, GoalType::AFTER_LOOP);
             TheRewriter.InsertTextBefore(endLoc, GET_LINE() + closing + GET_LINE_E());
+            //if(tmpGoalType == GoalType::IF)
+            if (isif) { interval_rewriter.InsertTextBefore(endLoc, GET_LINE() + closing + GET_LINE_E()); }
         }
     }
     return true;
@@ -264,14 +270,10 @@ bool MyVisitor::containNonDetCall(Stmt *S) {
         }
         FunctionDecl *func_decl = call->getDirectCallee();
         if (!func_decl) {
-            //std::cout << "getDirectCallee is NULL.... "  << std::endl;
-            //s->dumpColor();
             return false;
         }
         IdentifierInfo *identifierInfo = func_decl->getIdentifier();
         if (!identifierInfo) {
-            //std::cout << "identifierInfo is NULL.... "  << std::endl;
-            //s->dumpColor();
             return false;
         }
         //unsigned StartLine = SM.getSpellingLineNumber(call->getLocStart());
@@ -280,18 +282,7 @@ bool MyVisitor::containNonDetCall(Stmt *S) {
         //string funcNameStr = funcName.str();
         if (funcName.startswith("__VERIFIER_nondet_")) {
             return true;
-            // s starts with prefix
-            //unsigned startLine = this->sourceManager->getSpellingLineNumber(call->getBeginLoc());
 
-            /*if (std::find(goalCounterNonDet.vectLineNumberForNonDetCalls->begin(),
-                    goalCounterNonDet.vectLineNumberForNonDetCalls->end(),startLine)
-                    == goalCounterNonDet.vectLineNumberForNonDetCalls->end())*/
-            /*for(vector<NonDetCallInfo>::iterator ptr = goalCounter.vectLineNumberForNonDetCalls->begin();
-                ptr != goalCounter.vectLineNumberForNonDetCalls->end(); ptr++)*/
-            //{
-            //NonDetCallInfo * NonDetCallInfo_ptr = new NonDetCallInfo(startLine,identifierInfo->getName().str());
-            //goalCounterNonDet.vectLineNumberForNonDetCalls->push_back(NonDetCallInfo_ptr);
-            //}
 
 #if MYDEBUG
             //std::cout << "NonDetCall in startLine=" << startLine << std::endl;
@@ -311,95 +302,7 @@ bool MyVisitor::containNonDetCall(Stmt *S) {
 }
 
 void MyVisitor::check(Stmt *S) {
-    //const SourceManager &SM = *(TheHolder.SourceManager);
-    //const ASTContext *Context = TheHolder.ASTContext;
-    /*if(myOptions->replace_reach_error)
-    {
-        if(isa<CallExpr>(S))
-        {
-        //std::cout << "IT IS CallExpr !!" << std::endl;
-        CallExpr * call =cast<CallExpr>(S);
-        FunctionDecl * func_decl = call->getDirectCallee();
-        IdentifierInfo * identifierInfo = func_decl->getIdentifier();
-        //unsigned StartLine = SM.getSpellingLineNumber(call->getLocStart());
-        //std::cout << "StartLine=" << StartLine << std::endl;
-        if (identifierInfo->getName()=="reach_error")
-            TheRewriter.ReplaceText(call->getLocStart(), identifierInfo->getName().size(), " reach_original_error");
-        }
-    }*/
 
-    /*if(isa<DeclRefExpr>(S))
-    {
-        std::cout << "IT IS" << std::endl;
-        DeclRefExpr * decl =cast<DeclRefExpr>(S);
-        std::cout <<  decl->getNameInfo().getAsString() << std::endl;
-        FunctionDecl *func_decl = decl->getDirectCallee();
-        //DeclarationName declarationName();
-        //decl->getNameInfo().setName()
-
-    }*/
-
-    /*if (isa<DeclStmt>(S))
-    {
-        DeclStmt *declStmt = cast<DeclStmt>(S);
-        declStmt->dumpColor();
-        if(!declStmt->isSingleDecl())
-        {
-            for (DeclStmt::decl_iterator i = declStmt->decl_begin(), e = declStmt->decl_end(); i != e; ++i)
-            {
-                Decl * decl = *i;
-                if(isa<VarDecl>(decl))
-                {
-                    VarDecl * varDecl = cast<VarDecl>(decl);
-                    IdentifierInfo * identifierInfo = varDecl->getIdentifier();
-                    std::cout << "VARNAME:" << identifierInfo->getName().str() << std::endl;
-                    //varDecl->getNameAsString();
-
-                    if(varDecl->hasInit())
-                    {
-                        Expr* varInit = varDecl->getInit();
-                        if(varInit->isRValue())
-                        {
-                            //Works
-            #if 0
-                            SourceRange varSourceRange = varInit->getSourceRange();
-                            if(!varSourceRange.isValid())
-                                return true;
-                            CharSourceRange charSourceRange(varSourceRange, true);
-                            StringRef sourceText = Lexer::getSourceText(charSourceRange, astContext->getSourceManager(), astContext->getLangOpts(), 0);
-                            //llvm::outs() << ", initialization value: " << sourceText.str();
-            #endif
-                            if (isa<CallExpr>(varInit))
-                            {
-                                //Works
-                                CallExpr *Call = dyn_cast<CallExpr>(varInit);
-                                Decl *D = Call->getCalleeDecl();
-                                FunctionDecl *FD = Call->getDirectCallee();
-                                std::string fname = FD->getNameInfo().getAsString();
-                                //if (FD->isExternC() && (fname == "malloc" || fname == "calloc"))
-                                if(fname == "get")
-                                {
-                                    std::cout << "JAAA" << std::endl;
-                                    //declarations.insert(varDecl);
-                                    //std::string str = "\ns2e_concretize_fork(" + name + ", " + "sizeof(" + name + "), " + "0" + ");\n";
-                                    //llvm::outs() << str;
-                                    //InstrumentStmtAfter(varDecl, str);
-                                }
-                            }
-                        }
-                    }
-
-
-                }
-            }
-        }
-        //for (Stmt::child_iterator i = declStmt->child_begin(), e = declStmt->child_end(); i != e; ++i)
-        {
-            //Stmt *currStmt = *i;
-            //if(isa<VarDecl>(currStmt))
-            //std::cout << " VarDecl "<< std::endl;
-        }
-    }*/
     // Get location of closing parenthesis or 'do' to insert opening brace.
     if (isa<ForStmt>(S)) {
         ForStmt *forStmt = cast<ForStmt>(S);
@@ -436,6 +339,9 @@ void MyVisitor::check(Stmt *S) {
         SourceLocation startLoc = findRParenLocInIfOrWhile(ifStmt);
         if (startLoc.isInvalid())
             return;
+
+        c->get_contractors(ifStmt->getCond());
+
         Stmt *Else = ifStmt->getElse();
         Stmt *Then = ifStmt->getThen();
         bool isIfIf = isa<IfStmt>(Then) || isCompoundWithOneIf(Then);
@@ -449,19 +355,7 @@ void MyVisitor::check(Stmt *S) {
         } else {
             checkStmt(Then, startLoc, ifStmt->getElseLoc(), InstrumentOption::MUST_INSERT_ELSE, isIfIf);
         }
-    }
-        /*else if(isa<CompoundStmt>(S))
-        {
-        CompoundStmt * compoundStmt = cast<CompoundStmt>(S);
-            TheRewriter.InsertTextAfter(compoundStmt->getRBracLoc().getLocWithOffset(-1),"\n;GOAL_XX:;\n");
-
-        }*/
-        /*else if(isa<DeclStmt>(S))
-        {
-            llvm::outs()<< "\nSSSSSSSSSSSSSS\r\n" << S->getStmtClassName() ;
-            S->dumpColor();
-        }*/
-    else if (isa<SwitchStmt>(S)) {
+    } else if (isa<SwitchStmt>(S)) {
         //llvm::outs()<<  current_func->getNameAsString() << "\n";
         SwitchStmt *switchStmt = cast<SwitchStmt>(S);
         const SwitchCase *switchCase = switchStmt->getSwitchCaseList();
@@ -527,39 +421,9 @@ void MyVisitor::check(Stmt *S) {
                                             GET_LINE() + "fuSeBMC_return(0);" + GET_LINE_E());
         }
     } else if (isa<CallExpr>(S)) {
-        //std::cout << "IT IS CallExpr !!" << std::endl;
-        /*CallExpr * call =cast<CallExpr>(S);
-        if(call)
-        {
-            FunctionDecl * func_decl = call->getDirectCallee();
-            if(func_decl)
-            {
-                IdentifierInfo * identifierInfo = func_decl->getIdentifier();
-                if(identifierInfo)
-                {
-                    cout << "Call:" << identifierInfo->getName().str() << std::endl;
-                    if ( identifierInfo->getName() == "__assert_fail" ||
-                            identifierInfo->getName() == "__assert_perror_fail" ||
-                            identifierInfo->getName() == "__assert")
-                    {
-                        // s starts with prefix
-                        //unsigned startLine = this->sourceManager->getSpellingLineNumber(call->getBeginLoc());
-                        //TheRewriter.ReplaceText(call->getBeginLoc(), identifierInfo->getName().size(), " my_assert");
-                        TheRewriter.InsertTextBefore(call->getBeginLoc(),"exit(-1);");
 
-                    }
-                }
-            }
-        }*/
-
-
-        //if (identifierInfo->getName()=="reach_error")
-        //	TheRewriter.ReplaceText(call->getBeginLoc(), identifierInfo->getName().size(), " reach_original_error");
     } else {
-        //llvm_unreachable("Invalid match");
-        //llvm::outs()<< "\nSSSSSSSSSSSSSS\r\n" << S->getStmtClassName() ;
-        //llvm::outs()<< S->getLocStart().printToString(SM) << "\n";
-        //S->dumpColor();
+
     }
 }
 
@@ -567,8 +431,7 @@ void MyVisitor::handleInfiniteWhileLoop(WhileStmt *whileStmt, SourceLocation rPa
     Expr *wCond = whileStmt->getCond();
     if (isa<IntegerLiteral>(wCond)) {
         IntegerLiteral *integerLiteral = cast<IntegerLiteral>(wCond);
-        //std::cout << "IntegerLiteral\n";
-        //integerLiteral->isLValue();
+
         if (integerLiteral->getValue().getLimitedValue() == 1) {
             //std::cout << "ONEEEEE\n";
             for (Stmt::child_iterator i = whileStmt->child_begin(), e = whileStmt->child_end(); i != e; ++i) {
